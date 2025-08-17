@@ -1,0 +1,12 @@
+#Compilados
+/build/
+/*.o
+*.o
+*.obj
+*.exe
+*.out
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
