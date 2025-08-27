@@ -158,10 +158,20 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren, 5, 10, 20, 255);
         SDL_RenderClear(ren);
 
-        for (const auto& c : circles) {
-            SDL_SetRenderDrawColor(ren, c.color.r, c.color.g, c.color.b, 255);
+        float t = SDL_GetTicks() / 1000.0f;  // tiempo en segundos
+
+        for (int i = 0; i < (int)circles.size(); ++i) {
+            const auto& c = circles[i];
+            float phase = std::fmod(t + i * 0.05f, 1.0f);  // fase ligeramente distinta por partícula
+
+            Uint8 r = Uint8(127 + 127 * std::sin(phase * 6.2831853f));
+            Uint8 g = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 2.094f)); // +120°
+            Uint8 b = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 4.188f)); // +240°
+
+            SDL_SetRenderDrawColor(ren, r, g, b, 255);
             drawFilledCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r);
         }
+
 
         SDL_RenderPresent(ren);
     }
