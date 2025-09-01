@@ -8,10 +8,21 @@
 #include <string>
 #include <stdexcept>
 
-static void drawFilledCircle(SDL_Renderer* ren, int cx, int cy, int r) {
-    for (int dy = -r; dy <= r; ++dy) {
-        int dx = static_cast<int>(std::floor(std::sqrt((double)r*r - dy*dy)));
-        SDL_RenderDrawLine(ren, cx - dx, cy + dy, cx + dx, cy + dy);
+// 🎨 Dibuja múltiples círculos concéntricos con transparencia para efecto blur
+static void drawBlurredCircle(SDL_Renderer* ren, int cx, int cy, int r, SDL_Color baseColor) {
+    for (int i = r; i > 0; --i) {
+        float alpha = (float)i / r;
+        SDL_SetRenderDrawColor(
+            ren,
+            baseColor.r,
+            baseColor.g,
+            baseColor.b,
+            (Uint8)(255 * alpha * alpha)  // más suave en el centro
+        );
+        for (int dy = -i; dy <= i; ++dy) {
+            int dx = static_cast<int>(std::floor(std::sqrt((double)i*i - dy*dy)));
+            SDL_RenderDrawLine(ren, cx - dx, cy + dy, cx + dx, cy + dy);
+        }
     }
 }
 
@@ -155,8 +166,10 @@ int main(int argc, char** argv) {
             }
         }
 
-        SDL_SetRenderDrawColor(ren, 5, 10, 20, 255);
-        SDL_RenderClear(ren);
+        // 🖼️ Fondo translúcido para efecto de estela (motion trail)
+        SDL_SetRenderDrawColor(ren, 5, 10, 20, 25);  // muy bajo alfa
+        SDL_RenderFillRect(ren, NULL);
+
 
         float t = SDL_GetTicks() / 1000.0f;  // tiempo en segundos
 
@@ -169,7 +182,9 @@ int main(int argc, char** argv) {
             Uint8 b = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 4.188f)); // +240°
 
             SDL_SetRenderDrawColor(ren, r, g, b, 255);
-            drawFilledCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r);
+            SDL_Color color = { r, g, b, 255 };
+            drawBlurredCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r, color);
+
         }
 
 

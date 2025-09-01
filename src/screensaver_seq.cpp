@@ -67,6 +67,25 @@ static Params parseArgs(int argc, char** argv) {
     return p;
 }
 
+// 🎨 Efecto blur tipo metaball
+static void drawBlurredCircle(SDL_Renderer* ren, int cx, int cy, int r, SDL_Color baseColor) {
+    for (int i = r; i > 0; --i) {
+        float alpha = (float)i / r;
+        SDL_SetRenderDrawColor(
+            ren,
+            baseColor.r,
+            baseColor.g,
+            baseColor.b,
+            (Uint8)(255 * alpha * alpha)  // desenfoque suave al centro
+        );
+        for (int dy = -i; dy <= i; ++dy) {
+            int dx = static_cast<int>(std::floor(std::sqrt((double)i*i - dy*dy)));
+            SDL_RenderDrawLine(ren, cx - dx, cy + dy, cx + dx, cy + dy);
+        }
+    }
+}
+
+
 int main(int argc, char** argv) {
     // --- Programación defensiva en CLI
     Params cfg;
@@ -170,13 +189,23 @@ int main(int argc, char** argv) {
         }
 
         // --- Render
-        SDL_SetRenderDrawColor(ren, 5, 10, 20, 255); // fondo azulado oscuro
+        SDL_SetRenderDrawColor(ren, 5, 10, 20, 25); 
         SDL_RenderClear(ren);
 
-        for (const auto& c : circles) {
-            SDL_SetRenderDrawColor(ren, c.color.r, c.color.g, c.color.b, 255);
-            drawFilledCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r);
+        float t = SDL_GetTicks() / 1000.0f;
+
+        for (int i = 0; i < (int)circles.size(); ++i) {
+            const auto& c = circles[i];
+            float phase = std::fmod(t + i * 0.05f, 1.0f);
+
+            Uint8 r = Uint8(127 + 127 * std::sin(phase * 6.2831853f));
+            Uint8 g = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 2.094f));
+            Uint8 b = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 4.188f));
+
+            SDL_Color color = { r, g, b, 255 };
+            drawBlurredCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r, color);
         }
+
 
         SDL_RenderPresent(ren);
         // (VSYNC activo: limita a ~60FPS en la mayoría de GPUs)
