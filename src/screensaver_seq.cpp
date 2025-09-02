@@ -1,3 +1,7 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include "timing_helpers.h"
+
 #include <SDL2/SDL.h>
 #include <vector>
 #include <random>
@@ -20,6 +24,7 @@ struct Config {
     int N = 200;
     int width = 800;
     int height = 600;
+    int frames = 500; // nuevo: límite de frames
 };
 
 static Config parseArgs(int argc, char** argv) {
@@ -27,6 +32,7 @@ static Config parseArgs(int argc, char** argv) {
     if (argc > 1) cfg.N = std::stoi(argv[1]);
     if (argc > 2) cfg.width = std::stoi(argv[2]);
     if (argc > 3) cfg.height = std::stoi(argv[3]);
+    if (argc > 4) cfg.frames = std::stoi(argv[4]);
     if (cfg.width < 640) cfg.width = 640;
     if (cfg.height < 480) cfg.height = 480;
     return cfg;
@@ -105,7 +111,13 @@ int main(int argc, char** argv) {
     int mouse_x = -1, mouse_y = -1;
     bool mouse_clicked = false;
 
-    while(running){
+    // =================== ⏱️ Timer start
+    double t_start = now_seconds();
+    double acc_update_time = 0.0;
+    int frame_counter = 0;
+    // ===================
+
+    while(running && frame_counter < cfg.frames){
         while(SDL_PollEvent(&ev)){
             if(ev.type==SDL_QUIT) running=false;
             else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) running=false;
@@ -121,6 +133,8 @@ int main(int argc, char** argv) {
         accumulator += elapsed.count();
 
         while(accumulator>=dt_fixed){
+            double update_s = now_seconds();
+
             for(auto &p:particles){
                 float cx = cfg.width*0.5f;
                 float cy = cfg.height*0.5f;
@@ -153,6 +167,9 @@ int main(int argc, char** argv) {
             }
             mouse_clicked = false;
             accumulator-=dt_fixed;
+
+            double update_e = now_seconds();
+            acc_update_time += (update_e - update_s);
         }
 
         float tbg = SDL_GetTicks() / 2000.0f;
@@ -166,12 +183,10 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren,0,0,0,40);
         SDL_RenderFillRect(ren,&full);
 
-        float time = SDL_GetTicks() / 1000.0f; // tiempo en segundos
+        float time = SDL_GetTicks() / 1000.0f;
 
         for(size_t i=0; i<particles.size(); i++){
             auto &p = particles[i];
-
-            // 🌈 Color dinámico arcoíris
             float hue = std::fmod(time * 0.6f + i * 0.02f, 1.0f);
             float r = std::abs(std::sin(hue * 2 * M_PI));
             float g = std::abs(std::sin((hue + 0.33f) * 2 * M_PI));
@@ -188,7 +203,15 @@ int main(int argc, char** argv) {
         }
 
         SDL_RenderPresent(ren);
+        frame_counter++;
     }
+
+    // =================== ⏱️ Timer end
+    double t_end = now_seconds();
+    double elapsed = t_end - t_start;
+    printf("TIME_TOTAL %f\n", elapsed);
+    printf("TIME_UPDATE %f\n", acc_update_time);
+    // ===================
 
     for(auto &t:tex_by_r) SDL_DestroyTexture(t.second);
     SDL_DestroyRenderer(ren);

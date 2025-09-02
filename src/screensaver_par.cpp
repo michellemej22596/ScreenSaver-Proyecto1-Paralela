@@ -7,6 +7,9 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <omp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "timing_helpers.h"
 
 struct Particle {
     float x, y;
@@ -74,6 +77,11 @@ int main(int argc, char** argv) {
     Config cfg = parseArgs(argc, argv);
     omp_set_num_threads(cfg.threads);
 
+    int frames = 500;
+    if (argc >= 7) frames = atoi(argv[6]);
+
+    double t_start = now_seconds();
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::cerr << "SDL_Init error\n";
         return 1;
@@ -113,7 +121,10 @@ int main(int argc, char** argv) {
     int mouseX = -1, mouseY = -1;
     bool mouseClick = false;
 
-    while (running) {
+    double acc_update_time = 0.0;
+    int frame_counter = 0;
+
+    while (running && frame_counter < frames) {
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) running = false;
             else if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) running = false;
@@ -129,7 +140,9 @@ int main(int argc, char** argv) {
         accumulator += elapsed.count();
 
         while (accumulator >= dt_fixed) {
-            #pragma omp parallel for
+            double update_s = now_seconds();
+
+            #pragma omp parallel for schedule(dynamic)
             for (size_t i = 0; i < particles.size(); i++) {
                 auto& p = particles[i];
 
@@ -165,6 +178,10 @@ int main(int argc, char** argv) {
                 if (p.y < p.r) { p.y = p.r; p.vy = -p.vy * 0.9f; }
                 else if (p.y > cfg.height - p.r) { p.y = cfg.height - p.r; p.vy = -p.vy * 0.9f; }
             }
+
+            double update_e = now_seconds();
+            acc_update_time += (update_e - update_s);
+
             accumulator -= dt_fixed;
             mouseClick = false;
         }
@@ -180,14 +197,13 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 40);
         SDL_RenderFillRect(ren, &full);
 
-        // Render con colores cíclicos
         for (size_t i = 0; i < particles.size(); ++i) {
             auto& p = particles[i];
 
             float t = SDL_GetTicks() / 1000.0f;
-            float speed = 0.9f;  // velocidad del cambio
+            float speed = 0.9f;
 
-            float hue = fmod(t * speed + i * 0.02f, 1.0f);  // valor cíclico entre 0 y 1
+            float hue = fmod(t * speed + i * 0.02f, 1.0f);
             float r = std::abs(std::sin(hue * 2 * M_PI));
             float g = std::abs(std::sin((hue + 0.33f) * 2 * M_PI));
             float b = std::abs(std::sin((hue + 0.66f) * 2 * M_PI));
@@ -204,7 +220,14 @@ int main(int argc, char** argv) {
         }
 
         SDL_RenderPresent(ren);
+        frame_counter++;
     }
+
+    double t_end = now_seconds();
+    double elapsed = t_end - t_start;
+
+    printf("TIME_TOTAL %f\n", elapsed);
+    printf("TIME_UPDATE %f\n", acc_update_time);
 
     for (auto& t : tex_by_r) SDL_DestroyTexture(t.second);
     SDL_DestroyRenderer(ren);
