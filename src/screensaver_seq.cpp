@@ -101,13 +101,18 @@ int main(int argc, char** argv) {
     double accumulator=0.0;
     const double dt_fixed=1.0/60.0;
 
-    // Declarar solo una vez la variable full
     SDL_Rect full = {0, 0, cfg.width, cfg.height};
+    int mouse_x = -1, mouse_y = -1;
+    bool mouse_clicked = false;
 
     while(running){
         while(SDL_PollEvent(&ev)){
             if(ev.type==SDL_QUIT) running=false;
             else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) running=false;
+            else if(ev.type==SDL_MOUSEBUTTONDOWN && ev.button.button==SDL_BUTTON_LEFT) {
+                SDL_GetMouseState(&mouse_x, &mouse_y);
+                mouse_clicked = true;
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -125,6 +130,18 @@ int main(int argc, char** argv) {
                 p.ax = dx/dist*pull*0.02f;
                 p.ay = dy/dist*pull*0.02f;
 
+                // interacción mouse: leve repulsión
+                if (mouse_clicked) {
+                    float mdx = p.x - mouse_x;
+                    float mdy = p.y - mouse_y;
+                    float mdist = std::sqrt(mdx*mdx + mdy*mdy);
+                    if (mdist < 150.0f && mdist > 1e-5f) {
+                        float factor = 100.0f / (mdist * mdist);
+                        p.vx += (mdx / mdist) * factor;
+                        p.vy += (mdy / mdist) * factor;
+                    }
+                }
+
                 p.vx += p.ax*(float)dt_fixed; p.vy += p.ay*(float)dt_fixed;
                 p.vx*=0.9995f; p.vy*=0.9995f;
                 p.x += p.vx*dt_fixed*60.0f;
@@ -135,10 +152,10 @@ int main(int argc, char** argv) {
                 if(p.y<p.r){p.y=p.r;p.vy=-p.vy*0.9f;}
                 else if(p.y>cfg.height-p.r){p.y=cfg.height-p.r;p.vy=-p.vy*0.9f;}
             }
+            mouse_clicked = false;
             accumulator-=dt_fixed;
         }
 
-        // --- Fondo dinámico sutil
         float tbg = SDL_GetTicks() / 2000.0f;
         Uint8 rbg = Uint8(60 + 40 * std::sin(tbg));
         Uint8 gbg = Uint8(30 + 30 * std::sin(tbg + 2.0f));
@@ -147,11 +164,9 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren, rbg, gbg, bbg, 40);
         SDL_RenderFillRect(ren, &full);
 
-        // Trail overlay
         SDL_SetRenderDrawColor(ren,0,0,0,40);
         SDL_RenderFillRect(ren,&full);
 
-        // Render partículas
         for(auto &p:particles){
             SDL_Texture* tex=tex_by_r[p.r];
             SDL_SetTextureColorMod(tex,p.cr,p.cg,p.cb);

@@ -107,12 +107,17 @@ int main(int argc, char** argv){
     double accumulator=0.0;
     const double dt_fixed=1.0/60.0;
 
-    double cur_fps = 0.0; // inicialización para evitar error
+    int mouseX = -1, mouseY = -1;
+    bool mouseClick = false;
 
     while(running){
         while(SDL_PollEvent(&ev)){
             if(ev.type==SDL_QUIT) running=false;
             else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) running=false;
+            else if(ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT){
+                mouseClick = true;
+                SDL_GetMouseState(&mouseX, &mouseY);
+            }
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -124,6 +129,7 @@ int main(int argc, char** argv){
             #pragma omp parallel for
             for(size_t i=0; i<particles.size(); i++){
                 auto &p = particles[i];
+
                 float cx = cfg.width*0.5f;
                 float cy = cfg.height*0.5f;
                 float dx = cx-p.x, dy = cy-p.y;
@@ -131,6 +137,20 @@ int main(int argc, char** argv){
                 float pull = 20.0f/dist;
                 p.ax = dx/dist*pull*0.02f;
                 p.ay = dy/dist*pull*0.02f;
+
+                if(mouseClick){
+                    float dxm = mouseX - p.x;
+                    float dym = mouseY - p.y;
+                    float distSq = dxm*dxm + dym*dym;
+                    float maxDist = 100.0f;
+                    if(distSq < maxDist*maxDist){
+                        float factor = (1.0f - std::sqrt(distSq)/maxDist) * 0.5f;
+                        float angle = std::atan2(dym, dxm);
+                        float push = factor * 8.0f;
+                        p.vx -= std::cos(angle) * push;
+                        p.vy -= std::sin(angle) * push;
+                    }
+                }
 
                 p.vx += p.ax*(float)dt_fixed; p.vy += p.ay*(float)dt_fixed;
                 p.vx *= 0.9995f; p.vy *= 0.9995f;
@@ -143,9 +163,9 @@ int main(int argc, char** argv){
                 else if(p.y > cfg.height-p.r){ p.y = cfg.height-p.r; p.vy = -p.vy*0.9f; }
             }
             accumulator -= dt_fixed;
+            mouseClick = false;
         }
 
-        // Fondo dinámico sutil
         float tbg = SDL_GetTicks() / 2000.0f;
         Uint8 rbg = Uint8(60 + 40 * std::sin(tbg));
         Uint8 gbg = Uint8(30 + 30 * std::sin(tbg + 2.0f));
@@ -154,11 +174,9 @@ int main(int argc, char** argv){
         SDL_Rect full = {0, 0, cfg.width, cfg.height};
         SDL_RenderFillRect(ren, &full);
 
-        // Trail overlay
         SDL_SetRenderDrawColor(ren,0,0,0,40);
         SDL_RenderFillRect(ren,&full);
 
-        // Render partículas
         for(auto &p:particles){
             SDL_Texture* tex = tex_by_r[p.r];
             SDL_SetTextureColorMod(tex, p.cr, p.cg, p.cb);
