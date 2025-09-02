@@ -1,196 +1,176 @@
 #include <SDL2/SDL.h>
-#include <omp.h> 
-#include <cstdio>
 #include <vector>
 #include <random>
 #include <chrono>
 #include <cmath>
-#include <string>
+#include <iostream>
 #include <stdexcept>
+#include <unordered_map>
+#include <omp.h>
 
-// 🎨 Dibuja múltiples círculos concéntricos con transparencia para efecto blur
-static void drawBlurredCircle(SDL_Renderer* ren, int cx, int cy, int r, SDL_Color baseColor) {
-    for (int i = r; i > 0; --i) {
-        float alpha = (float)i / r;
-        SDL_SetRenderDrawColor(
-            ren,
-            baseColor.r,
-            baseColor.g,
-            baseColor.b,
-            (Uint8)(255 * alpha * alpha)  // más suave en el centro
-        );
-        for (int dy = -i; dy <= i; ++dy) {
-            int dx = static_cast<int>(std::floor(std::sqrt((double)i*i - dy*dy)));
-            SDL_RenderDrawLine(ren, cx - dx, cy + dy, cx + dx, cy + dy);
-        }
-    }
-}
-
-struct Circle {
+struct Particle {
     float x, y;
     float vx, vy;
-    int   r;
-    SDL_Color color;
+    float ax, ay;
+    int r;
+    Uint8 cr, cg, cb;
+    Uint8 alpha;
 };
 
-struct Params {
-    int N = 100;
+struct Config {
+    int N = 200;
     int width = 800;
     int height = 600;
+    int threads = 4;
+    int fps = 60;
 };
 
-static SDL_Color randomCoolColor(std::mt19937& rng) {
-    std::uniform_int_distribution<int> base(0, 255);
-    int b = 180 + base(rng) % 76;
-    int g = 160 + base(rng) % 96;
-    int r = base(rng) % 80;
-    if ((base(rng) % 10) == 0) { r = g = b = 230 + base(rng) % 26; }
-    return SDL_Color{ Uint8(r), Uint8(g), Uint8(b), 255 };
+static Config parseArgs(int argc, char** argv) {
+    Config cfg;
+    if (argc > 1) cfg.N = std::stoi(argv[1]);
+    if (argc > 2) cfg.width = std::stoi(argv[2]);
+    if (argc > 3) cfg.height = std::stoi(argv[3]);
+    if (argc > 4) cfg.threads = std::stoi(argv[4]);
+    if (argc > 5) cfg.fps = std::stoi(argv[5]);
+    if (cfg.width < 640) cfg.width = 640;
+    if (cfg.height < 480) cfg.height = 480;
+    if (cfg.threads < 1) cfg.threads = 1;
+    if (cfg.fps < 1) cfg.fps = 60;
+    return cfg;
 }
 
-static Params parseArgs(int argc, char** argv) {
-    Params p;
-    if (argc < 2) {
-        std::fprintf(stderr, "Uso: %s N [width height]\n", argv[0]);
-        std::fprintf(stderr, "Ej:  %s 200 1024 768\n", argv[0]);
-        throw std::runtime_error("Argumentos insuficientes");
+SDL_Texture* createCircleTexture(SDL_Renderer* ren, int r) {
+    int size = r * 2;
+    Uint32 pixel_format = SDL_PIXELFORMAT_RGBA32;
+    void* pixels = malloc(size * size * 4);
+    if (!pixels) return nullptr;
+    Uint8* px = (Uint8*)pixels;
+    for(int y=0; y<size; y++){
+        for(int x=0; x<size; x++){
+            int dx = x - r;
+            int dy = y - r;
+            float dist = std::sqrt(dx*dx + dy*dy);
+            Uint8 a = 0;
+            if(dist <= r){
+                float t = (1.0f - dist/(float)r);
+                a = (Uint8)(255*t*t);
+            }
+            int idx = (y*size + x)*4;
+            px[idx+0] = 255; px[idx+1] = 255; px[idx+2] = 255; px[idx+3] = a;
+        }
     }
-    try {
-        p.N = std::stoi(argv[1]);
-        if (p.N <= 0) throw std::runtime_error("N debe ser > 0");
-        if (argc >= 3) p.width = std::stoi(argv[2]);
-        if (argc >= 4) p.height = std::stoi(argv[3]);
-        if (p.width < 640 || p.height < 480)
-            throw std::runtime_error("Resolución mínima: 640x480");
-    } catch (...) {
-        throw std::runtime_error("Argumentos inválidos");
-    }
-    return p;
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, size, size, 32, pixel_format);
+    if(!surf){ free(pixels); return nullptr; }
+    memcpy(surf->pixels, pixels, size*size*4);
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(ren, surf);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_FreeSurface(surf);
+    free(pixels);
+    return tex;
 }
 
-int main(int argc, char** argv) {
-    Params cfg;
-    try {
-        cfg = parseArgs(argc, argv);
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "Error: %s\n", e.what());
-        return 1;
+int main(int argc, char** argv){
+    Config cfg = parseArgs(argc, argv);
+    omp_set_num_threads(cfg.threads);
+
+    if(SDL_Init(SDL_INIT_VIDEO) != 0){ std::cerr << "SDL_Init error\n"; return 1; }
+
+    SDL_Window* win = SDL_CreateWindow("Screensaver Paralelo", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, cfg.width, cfg.height, SDL_WINDOW_SHOWN);
+    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+    std::mt19937_64 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+    std::uniform_real_distribution<float> ux(0.0f,(float)cfg.width);
+    std::uniform_real_distribution<float> uy(0.0f,(float)cfg.height);
+    std::uniform_real_distribution<float> uv(-120.0f,120.0f);
+    std::uniform_int_distribution<int> ur(3,20);
+    std::uniform_int_distribution<int> uc(0,255);
+
+    std::vector<Particle> particles(cfg.N);
+    for(auto &p : particles){
+        p.r = ur(rng);
+        p.x = ux(rng); p.y = uy(rng);
+        p.vx = uv(rng)*0.01f; p.vy = uv(rng)*0.01f;
+        p.ax = p.ay = 0.0f;
+        p.cr = uc(rng); p.cg = uc(rng); p.cb = uc(rng);
+        p.alpha = 160 + uc(rng)%96;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        std::fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
-        return 1;
-    }
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
 
-    SDL_Window* win = SDL_CreateWindow(
-        "Screensaver Paralelo (OpenMP)",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        cfg.width, cfg.height, SDL_WINDOW_SHOWN
-    );
-    if (!win) {
-        std::fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_Renderer* ren = SDL_CreateRenderer(
-        win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
-    );
-    if (!ren) {
-        std::fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
-        SDL_DestroyWindow(win);
-        SDL_Quit();
-        return 1;
-    }
-
-    std::mt19937 rng(
-        (uint32_t)std::chrono::high_resolution_clock::now().time_since_epoch().count()
-    );
-    std::uniform_real_distribution<float> distX(20.0f, cfg.width  - 20.0f);
-    std::uniform_real_distribution<float> distY(20.0f, cfg.height - 20.0f);
-    std::uniform_real_distribution<float> distV(80.0f, 220.0f);
-    std::uniform_int_distribution<int>   distR(6, 14);
-
-    std::vector<Circle> circles;
-    circles.reserve(cfg.N);
-    for (int i = 0; i < cfg.N; ++i) {
-        Circle c;
-        c.x = distX(rng);
-        c.y = distY(rng);
-        float angle = std::uniform_real_distribution<float>(0.0f, 6.2831853f)(rng);
-        float speed = distV(rng);
-        c.vx = std::cos(angle) * speed;
-        c.vy = std::sin(angle) * speed;
-        c.r = distR(rng);
-        c.color = randomCoolColor(rng);
-        circles.push_back(c);
-    }
+    std::unordered_map<int,SDL_Texture*> tex_by_r;
+    for(int r=3; r<=20; r++) tex_by_r[r] = createCircleTexture(ren,r);
 
     bool running = true;
-    Uint32 lastTicks = SDL_GetTicks();
-    const float targetFPS = 60.0f;
-    const float maxDelta = 1.0f / 30.0f;
+    SDL_Event ev;
+    auto last = std::chrono::steady_clock::now();
+    double accumulator=0.0;
+    const double dt_fixed=1.0/60.0;
 
-    while (running) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
-            if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)
-                running = false;
+    double cur_fps = 0.0; // inicialización para evitar error
+
+    while(running){
+        while(SDL_PollEvent(&ev)){
+            if(ev.type==SDL_QUIT) running=false;
+            else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) running=false;
         }
 
-        Uint32 now = SDL_GetTicks();
-        float dt = (now - lastTicks) / 1000.0f;
-        lastTicks = now;
-        if (dt > maxDelta) dt = maxDelta;
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed = now-last;
+        last = now;
+        accumulator += elapsed.count();
 
-        #pragma omp parallel for
-        for (int i = 0; i < (int)circles.size(); ++i) {
-            Circle& c = circles[i];
-            c.x += c.vx * dt;
-            c.y += c.vy * dt;
+        while(accumulator>=dt_fixed){
+            #pragma omp parallel for
+            for(size_t i=0; i<particles.size(); i++){
+                auto &p = particles[i];
+                float cx = cfg.width*0.5f;
+                float cy = cfg.height*0.5f;
+                float dx = cx-p.x, dy = cy-p.y;
+                float dist = std::sqrt(dx*dx + dy*dy)+1e-5f;
+                float pull = 20.0f/dist;
+                p.ax = dx/dist*pull*0.02f;
+                p.ay = dy/dist*pull*0.02f;
 
-            if (c.x < c.r) {
-                c.x = (float)c.r;
-                c.vx = -c.vx;
-            } else if (c.x > cfg.width - c.r) {
-                c.x = (float)(cfg.width - c.r);
-                c.vx = -c.vx;
+                p.vx += p.ax*(float)dt_fixed; p.vy += p.ay*(float)dt_fixed;
+                p.vx *= 0.9995f; p.vy *= 0.9995f;
+                p.x += p.vx*dt_fixed*60.0f;
+                p.y += p.vy*dt_fixed*60.0f;
+
+                if(p.x < p.r){ p.x = p.r; p.vx = -p.vx*0.9f; }
+                else if(p.x > cfg.width-p.r){ p.x = cfg.width-p.r; p.vx = -p.vx*0.9f; }
+                if(p.y < p.r){ p.y = p.r; p.vy = -p.vy*0.9f; }
+                else if(p.y > cfg.height-p.r){ p.y = cfg.height-p.r; p.vy = -p.vy*0.9f; }
             }
-            if (c.y < c.r) {
-                c.y = (float)c.r;
-                c.vy = -c.vy;
-            } else if (c.y > cfg.height - c.r) {
-                c.y = (float)(cfg.height - c.r);
-                c.vy = -c.vy;
-            }
+            accumulator -= dt_fixed;
         }
 
-        // 🖼️ Fondo translúcido para efecto de estela (motion trail)
-        SDL_SetRenderDrawColor(ren, 5, 10, 20, 25);  // muy bajo alfa
-        SDL_RenderFillRect(ren, NULL);
+        // Fondo dinámico sutil
+        float tbg = SDL_GetTicks() / 2000.0f;
+        Uint8 rbg = Uint8(60 + 40 * std::sin(tbg));
+        Uint8 gbg = Uint8(30 + 30 * std::sin(tbg + 2.0f));
+        Uint8 bbg = Uint8(80 + 50 * std::cos(tbg));
+        SDL_SetRenderDrawColor(ren, rbg, gbg, bbg, 40);
+        SDL_Rect full = {0, 0, cfg.width, cfg.height};
+        SDL_RenderFillRect(ren, &full);
 
+        // Trail overlay
+        SDL_SetRenderDrawColor(ren,0,0,0,40);
+        SDL_RenderFillRect(ren,&full);
 
-        float t = SDL_GetTicks() / 1000.0f;  // tiempo en segundos
-
-        for (int i = 0; i < (int)circles.size(); ++i) {
-            const auto& c = circles[i];
-            float phase = std::fmod(t + i * 0.05f, 1.0f);  // fase ligeramente distinta por partícula
-
-            Uint8 r = Uint8(127 + 127 * std::sin(phase * 6.2831853f));
-            Uint8 g = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 2.094f)); // +120°
-            Uint8 b = Uint8(127 + 127 * std::sin(phase * 6.2831853f + 4.188f)); // +240°
-
-            SDL_SetRenderDrawColor(ren, r, g, b, 255);
-            SDL_Color color = { r, g, b, 255 };
-            drawBlurredCircle(ren, (int)std::lround(c.x), (int)std::lround(c.y), c.r, color);
-
+        // Render partículas
+        for(auto &p:particles){
+            SDL_Texture* tex = tex_by_r[p.r];
+            SDL_SetTextureColorMod(tex, p.cr, p.cg, p.cb);
+            SDL_SetTextureAlphaMod(tex, p.alpha);
+            SDL_Rect dst = {int(p.x-p.r), int(p.y-p.r), p.r*2, p.r*2};
+            SDL_RenderCopy(ren, tex, nullptr, &dst);
         }
-
 
         SDL_RenderPresent(ren);
     }
 
+    for(auto &t:tex_by_r) SDL_DestroyTexture(t.second);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
