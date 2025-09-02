@@ -130,7 +130,6 @@ int main(int argc, char** argv) {
                 p.ax = dx/dist*pull*0.02f;
                 p.ay = dy/dist*pull*0.02f;
 
-                // interacción mouse: leve repulsión
                 if (mouse_clicked) {
                     float mdx = p.x - mouse_x;
                     float mdy = p.y - mouse_y;
@@ -167,12 +166,25 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren,0,0,0,40);
         SDL_RenderFillRect(ren,&full);
 
-        for(auto &p:particles){
-            SDL_Texture* tex=tex_by_r[p.r];
-            SDL_SetTextureColorMod(tex,p.cr,p.cg,p.cb);
-            SDL_SetTextureAlphaMod(tex,p.alpha);
-            SDL_Rect dst={int(p.x-p.r),int(p.y-p.r),p.r*2,p.r*2};
-            SDL_RenderCopy(ren,tex,nullptr,&dst);
+        float time = SDL_GetTicks() / 1000.0f; // tiempo en segundos
+
+        for(size_t i=0; i<particles.size(); i++){
+            auto &p = particles[i];
+
+            // 🌈 Color dinámico arcoíris
+            float hue = std::fmod(time * 0.6f + i * 0.02f, 1.0f);
+            float r = std::abs(std::sin(hue * 2 * M_PI));
+            float g = std::abs(std::sin((hue + 0.33f) * 2 * M_PI));
+            float b = std::abs(std::sin((hue + 0.66f) * 2 * M_PI));
+            p.cr = Uint8(255 * r);
+            p.cg = Uint8(255 * g);
+            p.cb = Uint8(255 * b);
+
+            SDL_Texture* tex = tex_by_r[p.r];
+            SDL_SetTextureColorMod(tex, p.cr, p.cg, p.cb);
+            SDL_SetTextureAlphaMod(tex, p.alpha);
+            SDL_Rect dst = {int(p.x-p.r), int(p.y-p.r), p.r*2, p.r*2};
+            SDL_RenderCopy(ren, tex, nullptr, &dst);
         }
 
         SDL_RenderPresent(ren);
