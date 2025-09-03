@@ -229,6 +229,89 @@ int main(int argc, char** argv) {
     printf("TIME_TOTAL %f\n", elapsed);
     printf("TIME_UPDATE %f\n", acc_update_time);
 
+        // Animación final hasta cerrar ventana
+    bool keepRunning = true;
+    SDL_Event ev_final;
+    mouse_clicked = false;
+
+    while (keepRunning) {
+        while (SDL_PollEvent(&ev_final)) {
+            if (ev_final.type == SDL_QUIT) keepRunning = false;
+            else if (ev_final.type == SDL_KEYDOWN && ev_final.key.keysym.sym == SDLK_ESCAPE) keepRunning = false;
+            else if (ev_final.type == SDL_MOUSEBUTTONDOWN && ev_final.button.button == SDL_BUTTON_LEFT) {
+                SDL_GetMouseState(&mouse_x, &mouse_y);
+                mouse_clicked = true;
+            }
+        }
+
+        // Fondo animado
+        float tbg = SDL_GetTicks() / 2000.0f;
+        Uint8 rbg = Uint8(60 + 40 * std::sin(tbg));
+        Uint8 gbg = Uint8(30 + 30 * std::sin(tbg + 2.0f));
+        Uint8 bbg = Uint8(80 + 50 * std::cos(tbg));
+        SDL_SetRenderDrawColor(ren, rbg, gbg, bbg, 40);
+        SDL_RenderFillRect(ren, &full);
+
+        // Actualizar partículas sin medir tiempo
+        for (auto& p : particles) {
+            float cx = cfg.width * 0.5f;
+            float cy = cfg.height * 0.5f;
+            float dx = cx - p.x, dy = cy - p.y;
+            float dist = std::sqrt(dx * dx + dy * dy) + 1e-5f;
+            float pull = 20.0f / dist;
+            p.ax = dx / dist * pull * 0.02f;
+            p.ay = dy / dist * pull * 0.02f;
+
+            if (mouse_clicked) {
+                float mdx = p.x - mouse_x;
+                float mdy = p.y - mouse_y;
+                float mdist = std::sqrt(mdx * mdx + mdy * mdy);
+                if (mdist < 150.0f && mdist > 1e-5f) {
+                    float factor = 100.0f / (mdist * mdist);
+                    p.vx += (mdx / mdist) * factor;
+                    p.vy += (mdy / mdist) * factor;
+                }
+            }
+
+            // Movimiento
+            p.vx += p.ax * dt_fixed;
+            p.vy += p.ay * dt_fixed;
+            p.vx *= 0.9995f;
+            p.vy *= 0.9995f;
+            p.x += p.vx * dt_fixed * 60.0f;
+            p.y += p.vy * dt_fixed * 60.0f;
+
+            // Rebotes
+            if (p.x < p.r) { p.x = p.r; p.vx = -p.vx * 0.9f; }
+            else if (p.x > cfg.width - p.r) { p.x = cfg.width - p.r; p.vx = -p.vx * 0.9f; }
+            if (p.y < p.r) { p.y = p.r; p.vy = -p.vy * 0.9f; }
+            else if (p.y > cfg.height - p.r) { p.y = cfg.height - p.r; p.vy = -p.vy * 0.9f; }
+        }
+
+        // Dibujar partículas con gradiente
+        float time = SDL_GetTicks() / 1000.0f;
+        for (size_t i = 0; i < particles.size(); i++) {
+            auto& p = particles[i];
+            float hue = std::fmod(time * 0.6f + i * 0.02f, 1.0f);
+            float r = std::abs(std::sin(hue * 2 * M_PI));
+            float g = std::abs(std::sin((hue + 0.33f) * 2 * M_PI));
+            float b = std::abs(std::sin((hue + 0.66f) * 2 * M_PI));
+            p.cr = Uint8(255 * r);
+            p.cg = Uint8(255 * g);
+            p.cb = Uint8(255 * b);
+
+            SDL_Texture* tex = tex_by_r[p.r];
+            SDL_SetTextureColorMod(tex, p.cr, p.cg, p.cb);
+            SDL_SetTextureAlphaMod(tex, p.alpha);
+            SDL_Rect dst = { int(p.x - p.r), int(p.y - p.r), p.r * 2, p.r * 2 };
+            SDL_RenderCopy(ren, tex, nullptr, &dst);
+        }
+
+        SDL_RenderPresent(ren);
+        SDL_Delay(16);  // ~60 FPS
+        mouse_clicked = false;
+    }
+
     // Liberación de recursos
     for(auto &t:tex_by_r) SDL_DestroyTexture(t.second);
     SDL_DestroyRenderer(ren);
