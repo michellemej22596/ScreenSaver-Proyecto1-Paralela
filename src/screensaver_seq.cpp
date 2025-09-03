@@ -11,22 +11,25 @@
 #include <stdexcept>
 #include <unordered_map>
 
+// Estructura para representar una partícula
 struct Particle {
-    float x, y;
-    float vx, vy;
-    float ax, ay;
-    int r;
-    Uint8 cr, cg, cb;
-    Uint8 alpha;
+    float x, y;           // Posición
+    float vx, vy;         // Velocidad
+    float ax, ay;         // Aceleración
+    int r;                // Radio
+    Uint8 cr, cg, cb;     // Color (RGB)
+    Uint8 alpha;          // Transparencia
 };
 
+// Estructura para la configuración del programa
 struct Config {
-    int N = 200;
-    int width = 800;
-    int height = 600;
-    int frames = 500; // nuevo: límite de frames
+    int N = 200;          // Número de partículas
+    int width = 800;      // Ancho de ventana
+    int height = 600;     // Alto de ventana
+    int frames = 500;     // Cantidad de frames que se simularán
 };
 
+// Función que analiza argumentos de línea de comandos
 static Config parseArgs(int argc, char** argv) {
     Config cfg;
     if (argc > 1) cfg.N = std::stoi(argv[1]);
@@ -38,6 +41,7 @@ static Config parseArgs(int argc, char** argv) {
     return cfg;
 }
 
+// Crea una textura de círculo con transparencia para representar partículas
 SDL_Texture* createCircleTexture(SDL_Renderer* ren, int r) {
     int size = r*2;
     Uint32 pixel_format = SDL_PIXELFORMAT_RGBA32;
@@ -69,14 +73,17 @@ SDL_Texture* createCircleTexture(SDL_Renderer* ren, int r) {
 int main(int argc, char** argv) {
     Config cfg = parseArgs(argc,argv);
 
+    // Inicialización de SDL
     if(SDL_Init(SDL_INIT_VIDEO) != 0){ 
         std::cerr << "SDL_Init error\n"; 
         return 1; 
     }
 
+    // Creación de ventana y renderizador
     SDL_Window* win = SDL_CreateWindow("Screensaver Secuencial", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, cfg.width, cfg.height, SDL_WINDOW_SHOWN);
     SDL_Renderer* ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
+    // Inicialización de generadores aleatorios para partículas
     std::mt19937_64 rng(std::chrono::steady_clock::now().time_since_epoch().count());
     std::uniform_real_distribution<float> ux(0.0f,(float)cfg.width);
     std::uniform_real_distribution<float> uy(0.0f,(float)cfg.height);
@@ -84,6 +91,7 @@ int main(int argc, char** argv) {
     std::uniform_int_distribution<int> ur(3,20);
     std::uniform_int_distribution<int> uc(0,255);
 
+    // Creación de partículas
     std::vector<Particle> particles;
     for(int i=0;i<cfg.N;i++){
         Particle p;
@@ -98,9 +106,11 @@ int main(int argc, char** argv) {
 
     SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
 
+    // Pre-renderizado de círculos por tamaño
     std::unordered_map<int,SDL_Texture*> tex_by_r;
     for(int r=3;r<=20;r++) tex_by_r[r]=createCircleTexture(ren,r);
 
+    // Variables de simulación
     bool running = true;
     SDL_Event ev;
     auto last = std::chrono::steady_clock::now();
@@ -111,13 +121,14 @@ int main(int argc, char** argv) {
     int mouse_x = -1, mouse_y = -1;
     bool mouse_clicked = false;
 
-    // =================== ⏱️ Timer start
+    // Temporizador para medir el rendimiento
     double t_start = now_seconds();
     double acc_update_time = 0.0;
     int frame_counter = 0;
-    // ===================
 
+    // Bucle principal
     while(running && frame_counter < cfg.frames){
+        // Manejo de eventos (teclado, mouse, cerrar ventana)
         while(SDL_PollEvent(&ev)){
             if(ev.type==SDL_QUIT) running=false;
             else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) running=false;
@@ -127,11 +138,13 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Control de tiempo
         auto now = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed = now-last;
         last = now;
         accumulator += elapsed.count();
 
+        // Actualización física (posición, velocidad, colisiones)
         while(accumulator>=dt_fixed){
             double update_s = now_seconds();
 
@@ -155,11 +168,13 @@ int main(int argc, char** argv) {
                     }
                 }
 
+                // Integración y amortiguamiento
                 p.vx += p.ax*(float)dt_fixed; p.vy += p.ay*(float)dt_fixed;
                 p.vx*=0.9995f; p.vy*=0.9995f;
                 p.x += p.vx*dt_fixed*60.0f;
                 p.y += p.vy*dt_fixed*60.0f;
 
+                // Colisiones con bordes
                 if(p.x<p.r){p.x=p.r;p.vx=-p.vx*0.9f;}
                 else if(p.x>cfg.width-p.r){p.x=cfg.width-p.r;p.vx=-p.vx*0.9f;}
                 if(p.y<p.r){p.y=p.r;p.vy=-p.vy*0.9f;}
@@ -172,6 +187,7 @@ int main(int argc, char** argv) {
             acc_update_time += (update_e - update_s);
         }
 
+        // Color de fondo dinámico
         float tbg = SDL_GetTicks() / 2000.0f;
         Uint8 rbg = Uint8(60 + 40 * std::sin(tbg));
         Uint8 gbg = Uint8(30 + 30 * std::sin(tbg + 2.0f));
@@ -183,6 +199,7 @@ int main(int argc, char** argv) {
         SDL_SetRenderDrawColor(ren,0,0,0,40);
         SDL_RenderFillRect(ren,&full);
 
+        // Dibujar partículas con colores en gradiente
         float time = SDL_GetTicks() / 1000.0f;
 
         for(size_t i=0; i<particles.size(); i++){
@@ -206,13 +223,13 @@ int main(int argc, char** argv) {
         frame_counter++;
     }
 
-    // =================== ⏱️ Timer end
+    // Medición final de tiempo total y de actualización
     double t_end = now_seconds();
     double elapsed = t_end - t_start;
     printf("TIME_TOTAL %f\n", elapsed);
     printf("TIME_UPDATE %f\n", acc_update_time);
-    // ===================
 
+    // Liberación de recursos
     for(auto &t:tex_by_r) SDL_DestroyTexture(t.second);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
